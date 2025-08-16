@@ -51,7 +51,8 @@ This project uses a modern AI engineering stack to build a robust and scalable a
 
 The workflow is managed by a LangGraph Directed Acyclic Graph (DAG) that ensures a clear and efficient flow of data. The graph fans out to run the three extraction methods in parallel and then converges at a final aggregation node.
 
-![Architecture Diagram](./architecture.jpg)
+<img width="1240" height="688" alt="image" src="https://github.com/user-attachments/assets/11b3a06f-e7b9-4b86-8254-1fe33d42de02" />
+
 
 ## ⚙️ Installation & Setup
 
