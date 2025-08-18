@@ -21,6 +21,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from dotenv import load_dotenv
 from prompts import LLM_EXTRACTION_PROMPT, AGGREGATION_PROMPT
 
+import nest_asyncio
+nest_asyncio.apply()
+
 load_dotenv()
 
 
