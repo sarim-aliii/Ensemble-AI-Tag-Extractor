@@ -119,17 +119,25 @@ def aggregation_node(state: ExtractionGraphState) -> dict:
         return {"final_tags": []}
 
 
+def fork_node(state: ExtractionGraphState) -> dict:
+    """A dummy node that acts as the starting point for parallel execution."""
+    return {}
+
 def build_graph():
+    """Builds and compiles the LangGraph using the Fork/Join pattern."""
     graph = StateGraph(ExtractionGraphState)
 
+    graph.add_node("fork", fork_node)
     graph.add_node("gazetteer_extraction", gazetteer_extraction_node)
     graph.add_node("spacy_extraction", spacy_extraction_node)
     graph.add_node("llm_extraction", llm_extraction_node)
     graph.add_node("aggregation", aggregation_node)
 
-    graph.add_edge(START, "gazetteer_extraction")
-    graph.add_edge(START, "spacy_extraction")
-    graph.add_edge(START, "llm_extraction")
+    graph.set_entry_point("fork")
+
+    graph.add_edge("fork", "gazetteer_extraction")
+    graph.add_edge("fork", "spacy_extraction")
+    graph.add_edge("fork", "llm_extraction")
 
     graph.add_edge("gazetteer_extraction", "aggregation")
     graph.add_edge("spacy_extraction", "aggregation")
@@ -138,6 +146,7 @@ def build_graph():
     graph.add_edge("aggregation", END)
     
     return graph.compile()
+
 
 st.title("📄✨ Ensemble AI Tag Extractor")
 st.markdown("This tool uses three different methods to extract keywords from text and then uses an LLM to rank the most relevant ones.")
