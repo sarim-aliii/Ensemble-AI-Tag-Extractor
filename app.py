@@ -118,7 +118,7 @@ def aggregation_node(state: ExtractionGraphState) -> dict:
         st.error(f"LLM Ranking Error: {e}")
         return {"final_tags": []}
 
-@st.cache_resource(show_spinner=False)
+
 def build_graph():
     graph = StateGraph(ExtractionGraphState)
 
