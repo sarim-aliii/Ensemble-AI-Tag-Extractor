@@ -1,13 +1,13 @@
-import streamlit as st
 import pandas as pd
-import os
 import spacy
-from spacy.pipeline import EntityRuler
 from spacy import displacy
+from spacy.pipeline import EntityRuler
+import streamlit as st
+import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 from typing import List, Optional
 import re
-import streamlit.components.v1 as components
+from io import StringIO
 
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, END, START
@@ -23,43 +23,36 @@ from prompts import LLM_EXTRACTION_PROMPT, AGGREGATION_PROMPT
 
 load_dotenv()
 
-# --- 1. App Configuration and Caching ---
-st.set_page_config(layout="wide", page_title="Ensemble Tag Extractor")
-st.write("✅ App configuration set.")
 
+st.set_page_config(layout="wide", page_title="Ensemble Tag Extractor")
 @st.cache_resource(show_spinner=False)
 def get_llm():
-    st.write("➡️ Caching LLM resource...")
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0)
-    st.write("✅ LLM resource cached.")
-    return llm
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0)
 
 @st.cache_resource(show_spinner=False)
 def get_spacy_pipeline(gazetteer: pd.DataFrame) -> spacy.language.Language:
-    st.write("➡️ Caching spaCy pipeline resource...")
+    """Creates and caches the spaCy pipeline with a custom entity ruler."""
     nlp = spacy.load("en_core_web_sm", disable=["ner"])
     patterns = [{'label': row['Category'], 'pattern': row['Term']} for _, row in gazetteer.iterrows()]
     ruler = nlp.add_pipe("entity_ruler")
     ruler.add_patterns(patterns)
-    st.write("✅ spaCy pipeline resource cached.")
     return nlp
 
-# --- 2. State and Graph Definition (Now More Lightweight) ---
 class ExtractionGraphState(TypedDict):
     content_string: str
     content_lines: List[str]
     gazetteer_df: pd.DataFrame
     n_top_tags: int
+
     gazetteer_tags: Optional[List[str]]
     spacy_tags: Optional[List[str]]
     llm_tags: Optional[List[str]]
+
     spacy_viz_html: Optional[str]
     final_tags: Optional[List[str]]
 
-# --- 3. Node Definitions (Now Access Cached Models) ---
 
 def gazetteer_extraction_node(state: ExtractionGraphState) -> dict:
-    print("--- Running Node: gazetteer_extraction ---") # Console log
     lines, gazetteer = state["content_lines"], state["gazetteer_df"]
     tags = set()
     for line in lines:
@@ -69,7 +62,6 @@ def gazetteer_extraction_node(state: ExtractionGraphState) -> dict:
     return {"gazetteer_tags": list(tags)}
 
 def spacy_extraction_node(state: ExtractionGraphState) -> dict:
-    print("--- Running Node: spacy_extraction ---") # Console log
     content, gazetteer = state["content_string"], state["gazetteer_df"]
     nlp_pipeline = get_spacy_pipeline(gazetteer)
     
@@ -79,29 +71,25 @@ def spacy_extraction_node(state: ExtractionGraphState) -> dict:
     
     custom_ents_doc = spacy.tokens.Doc(doc.vocab, words=[t.text for t in doc])
     custom_ents_doc.ents = [ent for ent in doc.ents if ent.label_ in gazetteer_categories]
-    
     color_map = {
-        "Stress_Indicator": "#FF6961", "Positive_Engagement": "#77DD77", 
-        "Work_Life_Balance": "#AEC6CF", "Corporate_Process": "#C3B1E1"
+        "Stress_Indicator": "#FF6961", 
+        "Positive_Engagement": "#77DD77", 
+        "Work_Life_Balance": "#AEC6CF", 
+        "Corporate_Process": "#C3B1E1"
     }
     options = {"ents": gazetteer_categories.tolist(), "colors": color_map}
     html = displacy.render(custom_ents_doc, style="ent", options=options, jupyter=False)
-    
     return {"spacy_tags": list(set(matched_entities)), "spacy_viz_html": html}
 
 class ExtractedEntities(BaseModel):
     found_terms: list[str] = Field(description="A list of unique terms from the gazetteer found in the text.")
 
 def llm_extraction_node(state: ExtractionGraphState) -> dict:
-    print("--- Running Node: llm_extraction ---") # Console log
     content, gazetteer_terms = state["content_string"], state["gazetteer_df"]['Term'].tolist()
     llm = get_llm()
     
     parser = PydanticOutputParser(pydantic_object=ExtractedEntities)
-    prompt = ChatPromptTemplate.from_template(
-        template=LLM_EXTRACTION_PROMPT, 
-        partial_variables={"format_instructions": parser.get_format_instructions()}
-    )
+    prompt = ChatPromptTemplate.from_template(template=LLM_EXTRACTION_PROMPT, partial_variables={"format_instructions": parser.get_format_instructions()})
     chain = prompt | llm | parser
     try:
         result = chain.invoke({"gazetteer_list": ", ".join(gazetteer_terms), "text_content": content})
@@ -114,21 +102,14 @@ class FinalRankedTags(BaseModel):
     top_n_tags: list[str] = Field(description="The top N most relevant tags.")
 
 def aggregation_node(state: ExtractionGraphState) -> dict:
-    print("--- Running Node: aggregation ---") # Console log
     content_string, n = state["content_string"], state["n_top_tags"]
     llm = get_llm()
     
-    candidate_tags = list(set(
-        state.get("gazetteer_tags", []) + state.get("spacy_tags", []) + state.get("llm_tags", [])
-    ))
-    if not candidate_tags: 
-        return {"final_tags": []}
+    candidate_tags = list(set(state.get("gazetteer_tags", []) + state.get("spacy_tags", []) + state.get("llm_tags", [])))
+    if not candidate_tags: return {"final_tags": []}
     
     parser = PydanticOutputParser(pydantic_object=FinalRankedTags)
-    prompt = ChatPromptTemplate.from_template(
-        template=AGGREGATION_PROMPT, 
-        partial_variables={"format_instructions": parser.get_format_instructions()}
-    )
+    prompt = ChatPromptTemplate.from_template(template=AGGREGATION_PROMPT, partial_variables={"format_instructions": parser.get_format_instructions()})
     chain = prompt | llm | parser
     try:
         result = chain.invoke({"n": n, "tag_list": ", ".join(candidate_tags), "text_content": content_string})
@@ -137,7 +118,7 @@ def aggregation_node(state: ExtractionGraphState) -> dict:
         st.error(f"LLM Ranking Error: {e}")
         return {"final_tags": []}
 
-# --- 4. Graph Definition ---
+@st.cache_resource(show_spinner=False)
 def build_graph():
     graph = StateGraph(ExtractionGraphState)
     graph.add_node("gazetteer_extraction", gazetteer_extraction_node)
@@ -153,8 +134,6 @@ def build_graph():
     graph.add_edge("aggregation", END)
     return graph.compile()
 
-# --- 5. UI and Main Execution ---
-st.write("✅ Script start. Defining UI elements...")
 st.title("📄✨ Ensemble AI Tag Extractor")
 st.markdown("This tool uses three different methods to extract keywords from text and then uses an LLM to rank the most relevant ones.")
 
@@ -175,30 +154,18 @@ with st.sidebar:
     analysis_button = st.button("🚀 Run Analysis", type="primary")
 
 if analysis_button:
-    st.write("➡️ Analysis button clicked.")
     if not user_text.strip():
         st.warning("Please paste some text to analyze.")
     elif uploaded_gazetteer is None and default_gazetteer is None:
         st.warning("Please upload a gazetteer CSV file.")
     else:
         with st.spinner("🤖 AI is thinking... This may take a moment..."):
-            st.write("➡️ Loading gazetteer data...")
             if uploaded_gazetteer:
                 gazetteer_df = pd.read_csv(uploaded_gazetteer)
             else:
-                from io import StringIO
                 gazetteer_df = pd.read_csv(StringIO(default_gazetteer))
-            st.write("✅ Gazetteer data loaded.")
-
-            st.write("➡️ Initializing models via cached functions...")
-            # These calls will only run the actual functions on the first click.
-            get_llm()
-            get_spacy_pipeline(gazetteer_df)
-            st.write("✅ Models initialized.")
-
-            st.write("➡️ Building graph...")
+            
             graph = build_graph()
-            st.write("✅ Graph built.")
 
             initial_state = {
                 "content_string": user_text,
@@ -207,46 +174,45 @@ if analysis_button:
                 "n_top_tags": top_n,
             }
             
-            st.write("➡️ Invoking graph...")
             final_state = graph.invoke(initial_state)
-            st.write("✅ Graph invocation complete.")
 
             st.session_state.results = final_state
             st.session_state.user_text = user_text
             st.session_state.gazetteer_df = gazetteer_df
-            st.write("✅ Results saved to session state.")
 
 def highlight_text(content: str, final_tags: list, gazetteer_df: pd.DataFrame) -> str:
     color_map = {
-        "Stress_Indicator": "rgba(255, 127, 127, 0.5)", "Positive_Engagement": "rgba(144, 238, 144, 0.6)",
-        "Work_Life_Balance": "rgba(173, 216, 230, 0.6)", "Corporate_Process": "rgba(221, 160, 221, 0.5)", 
+        "Stress_Indicator": "rgba(255, 127, 127, 0.5)", 
+        "Positive_Engagement": "rgba(144, 238, 144, 0.6)", 
+        "Work_Life_Balance": "rgba(173, 216, 230, 0.6)", 
+        "Corporate_Process": "rgba(221, 160, 221, 0.5)", 
         "default": "rgba(255, 255, 0, 0.5)"
     }
+
     tag_to_category = gazetteer_df.set_index('Term')['Category'].to_dict()
     sorted_tags = sorted(final_tags, key=len, reverse=True)
     pattern = r'\b(' + '|'.join(re.escape(tag) for tag in sorted_tags) + r')\b'
+
     def replace_func(match):
         matched_text = match.group(0)
         category = tag_to_category.get(matched_text, "default")
         color = color_map.get(category, color_map["default"])
         return f'<span style="background-color: {color}; padding: 2px 4px; margin: 0 2px; border-radius: 4px; line-height: 1.6;">{matched_text}</span>'
+
     highlighted_content = re.sub(pattern, replace_func, content, flags=re.IGNORECASE)
     legend_html = "<div style='margin-bottom: 20px;'><b>Legend:</b> "
     seen_categories = {tag_to_category.get(tag) for tag in final_tags if tag_to_category.get(tag)}
+    
     for category in sorted(seen_categories):
         color = color_map.get(category, color_map["default"])
         legend_html += f'<span style="background-color: {color}; padding: 2px 6px; margin: 0 5px; border-radius: 4px;">{category.replace("_", " ")}</span>'
     legend_html += "</div>"
     return legend_html + highlighted_content.replace("\n", "<br>")
 
-st.write("✅ Script finished. Awaiting user interaction.")
 if 'results' in st.session_state:
-    st.write("➡️ Found results in session state. Rendering output...")
-    results = st.session_state.results
-    user_text = st.session_state.user_text
-    gazetteer_df = st.session_state.gazetteer_df
+    # (This entire UI display block is unchanged)
+    results, user_text, gazetteer_df = st.session_state.results, st.session_state.user_text, st.session_state.gazetteer_df
     final_tags = results.get("final_tags", [])
-
     st.header("✨ Highlighted Text Analysis")
     if not final_tags:
         st.info("No tags were found to highlight in the text.")
@@ -254,9 +220,7 @@ if 'results' in st.session_state:
     else:
         highlighted_html = highlight_text(user_text, final_tags, gazetteer_df)
         st.markdown(highlighted_html, unsafe_allow_html=True)
-    
     st.divider()
-
     st.header("🏆 Final Ranked Tags")
     if not final_tags:
         st.info("No relevant tags were found by the final ranking model.")
@@ -275,9 +239,7 @@ if 'results' in st.session_state:
             ax.set_title('Frequency of Final Tags')
             plt.tight_layout()
             st.pyplot(fig)
-    
     st.divider()
-
     st.header("🕵️‍♂️ Intermediate Results from Each Method")
     with st.expander("1. Gazetteer (Simple Search) Results"):
         st.write(results.get("gazetteer_tags", []))
