@@ -127,9 +127,9 @@ def build_graph():
     graph.add_node("llm_extraction", llm_extraction_node)
     graph.add_node("aggregation", aggregation_node)
 
-    graph.set_entry_point("gazetteer_extraction")
-    graph.set_entry_point("spacy_extraction")
-    graph.set_entry_point("llm_extraction")
+    graph.add_edge(START, "gazetteer_extraction")
+    graph.add_edge(START, "spacy_extraction")
+    graph.add_edge(START, "llm_extraction")
 
     graph.add_edge("gazetteer_extraction", "aggregation")
     graph.add_edge("spacy_extraction", "aggregation")
