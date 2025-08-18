@@ -134,7 +134,7 @@ def build_graph():
     graph.add_edge("gazetteer_extraction", "aggregation")
     graph.add_edge("spacy_extraction", "aggregation")
     graph.add_edge("llm_extraction", "aggregation")
-
+    
     graph.add_edge("aggregation", END)
     
     return graph.compile()
