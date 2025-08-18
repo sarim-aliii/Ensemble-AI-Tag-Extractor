@@ -118,9 +118,10 @@ def aggregation_node(state: ExtractionGraphState) -> dict:
         st.error(f"LLM Ranking Error: {e}")
         return {"final_tags": []}
 
+def start_router(state: ExtractionGraphState) -> List[str]:
+    return ["gazetteer_extraction", "spacy_extraction", "llm_extraction"]
 
 def build_graph():
-    """Builds and compiles the LangGraph using the correct parallel execution pattern."""
     graph = StateGraph(ExtractionGraphState)
 
     graph.add_node("gazetteer_extraction", gazetteer_extraction_node)
@@ -128,7 +129,7 @@ def build_graph():
     graph.add_node("llm_extraction", llm_extraction_node)
     graph.add_node("aggregation", aggregation_node)
 
-    graph.add_edge(START, ["gazetteer_extraction", "spacy_extraction", "llm_extraction"])
+    graph.set_conditional_entry_point(start_router)
 
     graph.add_edge("gazetteer_extraction", "aggregation")
     graph.add_edge("spacy_extraction", "aggregation")
