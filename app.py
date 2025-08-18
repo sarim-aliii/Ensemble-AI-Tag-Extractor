@@ -119,25 +119,16 @@ def aggregation_node(state: ExtractionGraphState) -> dict:
         return {"final_tags": []}
 
 
-def fork_node(state: ExtractionGraphState) -> dict:
-    """A dummy node that acts as the starting point for parallel execution."""
-    return {}
-
 def build_graph():
-    """Builds and compiles the LangGraph using the Fork/Join pattern."""
+    """Builds and compiles the LangGraph using the correct parallel execution pattern."""
     graph = StateGraph(ExtractionGraphState)
 
-    graph.add_node("fork", fork_node)
     graph.add_node("gazetteer_extraction", gazetteer_extraction_node)
     graph.add_node("spacy_extraction", spacy_extraction_node)
     graph.add_node("llm_extraction", llm_extraction_node)
     graph.add_node("aggregation", aggregation_node)
 
-    graph.set_entry_point("fork")
-
-    graph.add_edge("fork", "gazetteer_extraction")
-    graph.add_edge("fork", "spacy_extraction")
-    graph.add_edge("fork", "llm_extraction")
+    graph.add_edge(START, ["gazetteer_extraction", "spacy_extraction", "llm_extraction"])
 
     graph.add_edge("gazetteer_extraction", "aggregation")
     graph.add_edge("spacy_extraction", "aggregation")
